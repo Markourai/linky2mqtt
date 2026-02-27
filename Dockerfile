@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #COPY requirements.txt .
 #RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+COPY app/ .
 
 # L'utilisateur root est nécessaire pour accéder au port série dans Docker,
 # ou ajouter l'utilisateur au groupe dialout selon votre config.

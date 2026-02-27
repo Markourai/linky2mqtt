@@ -15,7 +15,7 @@ SERIAL_PARITY   = os.getenv("SERIAL_PARITY", "E")   # E=Even, N=None, O=Odd
 SERIAL_STOPS    = int(os.getenv("SERIAL_STOPS",  "1"))
 
 # ── Broker MQTT ────────────────────────────────────────────────────────────────
-MQTT_HOST       = os.getenv("MQTT_HOST",   "mqtt.marescq.fr")
+MQTT_HOST       = os.getenv("MQTT_HOST",   "mymqtt")
 MQTT_PORT       = int(os.getenv("MQTT_PORT",   "1883"))
 MQTT_USER       = os.getenv("MQTT_USER",   "")
 MQTT_PASS       = os.getenv("MQTT_PASS",   "")

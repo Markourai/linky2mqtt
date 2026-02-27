@@ -5,13 +5,15 @@ Inspired by soria2mqtt (https://github.com/Markourai/soria2mqtt)
 Reads data from a linky TIC on USB serial,
 decodes the linky message
 and publishes measurements to MQTT with Home Assistant auto-discovery.
+
+!!! Only for Tempo contract !!!
 """
 
 import logging
 from mqtt_client import MQTTClient
 from bridge import run
 
-VERSION = "1.0.5"
+VERSION = "0.1"
 
 logging.basicConfig(
     level=logging.INFO,
