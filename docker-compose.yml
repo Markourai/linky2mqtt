@@ -1,0 +1,21 @@
+services:
+  linky2mqtt:
+    build: .
+    container_name: linky2mqtt
+    restart: unless-stopped
+
+    # ── Port série ─────────────────────────────────────────────────────────────
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0   # adaptez si votre adaptateur USB→série
+                                      # est sur ttyUSB1, ttyACM0, etc.
+
+    # ── Variables d'environnement ──────────────────────────────────────────────
+    env_file:
+      - .env
+
+    # ── Logs ───────────────────────────────────────────────────────────────────
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
