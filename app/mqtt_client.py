@@ -103,10 +103,12 @@ class MQTTClient:
         log.debug("MQTT ↑ %s = %s", full_topic, str_value)
         return True
 
-    # ── Callbacks paho 1.6.1 ─────────────────────────────────────────────────
+    # ── Callbacks compatibles paho 1.6.1 ET 2.x ──────────────────────────────
+    # paho 1.6.1 : on_connect(client, userdata, flags, rc)
+    # paho 2.x   : on_connect(client, userdata, flags, rc, properties)
+    # properties=None en optionnel couvre les deux versions.
 
-    def _on_connect(self, client, userdata, flags, rc):
-        # rc=0 : succès, autres valeurs : erreur
+    def _on_connect(self, client, userdata, flags, rc, properties=None):
         if rc == 0:
             self._connected = True
             log.info("MQTT connecté à %s:%s", MQTT_HOST, MQTT_PORT)
@@ -114,8 +116,9 @@ class MQTTClient:
             log.error("MQTT connexion refusée (rc=%s — %s)",
                       rc, mqtt.connack_string(rc))
 
-    def _on_disconnect(self, client, userdata, rc):
-        # paho 1.6.1 : seulement 3 arguments
+    def _on_disconnect(self, client, userdata, rc, properties=None):
+        # paho 1.6.1 : (client, userdata, rc)
+        # paho 2.x   : (client, userdata, disconnect_flags, reason_code, properties)
         self._connected = False
         if rc == 0:
             log.info("MQTT déconnecté proprement")
