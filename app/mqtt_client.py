@@ -1,19 +1,15 @@
 """
 mqtt_client.py — Connexion au broker MQTT et publication avec RBE.
-Cible : paho-mqtt 2.x / Python 3.14.
+Compatible paho-mqtt 1.6.1.
 
-Changements API paho 2.x vs 1.x :
-  - on_connect(client, userdata, flags, reason_code, properties)
-    reason_code est un objet ReasonCode — se compare directement à 0
-  - on_disconnect(client, userdata, disconnect_flags, reason_code, properties)
-    5 arguments obligatoires
-  - CallbackAPIVersion.VERSION2 requis dans le constructeur
+RBE (Report By Exception) : un message n'est publié que si sa valeur
+a changé depuis la dernière publication — comportement identique aux
+nœuds 'rbe' du flow Node-RED d'origine.
 """
 
 import logging
 import time
 import paho.mqtt.client as mqtt
-from paho.mqtt.enums import CallbackAPIVersion
 
 from config import (
     MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS,
@@ -22,75 +18,83 @@ from config import (
 
 log = logging.getLogger(__name__)
 
-_RETRY_DELAY = 5
-
-_CONNACK_ERRORS = {
-    1: "Protocole MQTT refusé (version incompatible avec le broker)",
-    2: "Client ID refusé (interdit ou déjà connecté)",
-    3: "Broker indisponible",
-    4: "Mauvais nom d'utilisateur ou mot de passe",
-    5: "Non autorisé (ACL / droits insuffisants)",
-}
+_RETRY_DELAY = 5    # secondes entre deux tentatives de connexion initiale
 
 
 class MQTTClient:
+    """
+    Wrapper autour de paho-mqtt 1.6.1 avec :
+      - retry de connexion initiale si le broker est injoignable au démarrage
+      - reconnexion automatique via loop_start (paho gère le reconnect)
+      - publication RBE (publish uniquement si valeur ≠ dernière valeur)
+    """
 
     def __init__(self):
-        # paho 2.x : CallbackAPIVersion obligatoire pour éviter le DeprecationWarning
+        # paho 1.6.1 : pas de reconnect_on_failure dans le constructeur
         self._client = mqtt.Client(
-            callback_api_version = CallbackAPIVersion.VERSION2,
-            client_id            = MQTT_CLIENT,
-            protocol             = mqtt.MQTTv5,
+            client_id = MQTT_CLIENT,
+            protocol  = mqtt.MQTTv5,
         )
         self._last: dict[str, str] = {}
         self._connected = False
 
         if MQTT_USER:
             self._client.username_pw_set(MQTT_USER, MQTT_PASS)
-            log.info("Auth MQTT : user=%r  pass_len=%d", MQTT_USER, len(MQTT_PASS))
-        else:
-            log.warning("Auth MQTT : MQTT_USER vide — connexion anonyme")
 
-        log.info("Client MQTT : id=%r  broker=%s:%s", MQTT_CLIENT, MQTT_HOST, MQTT_PORT)
-
+        # paho 1.6.1 signatures :
+        #   on_connect(client, userdata, flags, rc)       ← rc est un int
+        #   on_disconnect(client, userdata, rc)           ← 3 args seulement
         self._client.on_connect    = self._on_connect
         self._client.on_disconnect = self._on_disconnect
 
     # ── Connexion ──────────────────────────────────────────────────────────────
 
     def connect(self) -> None:
+        """
+        Tente de se connecter au broker MQTT.
+        Réessaie indéfiniment avec un délai si le broker est injoignable.
+        """
         attempt = 0
         while True:
             attempt += 1
             try:
-                log.info("Connexion MQTT (tentative %d)…", attempt)
+                log.info("Connexion MQTT → %s:%s (tentative %d)…",
+                         MQTT_HOST, MQTT_PORT, attempt)
                 self._client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
                 self._client.loop_start()
+                # Attendre la confirmation on_connect (max 10 s)
                 for _ in range(20):
                     if self._connected:
                         return
                     time.sleep(0.5)
                 log.warning("Pas de réponse du broker après 10 s — on continue quand même")
                 return
+
             except OSError as exc:
-                log.error("Connexion échouée : %s — retry dans %d s", exc, _RETRY_DELAY)
+                log.error("Connexion MQTT échouée : %s — retry dans %d s", exc, _RETRY_DELAY)
                 time.sleep(_RETRY_DELAY)
 
     def disconnect(self) -> None:
+        """Arrêt propre."""
         self._client.loop_stop()
         self._client.disconnect()
         log.info("MQTT déconnecté")
 
-    # ── Publication RBE ────────────────────────────────────────────────────────
+    # ── Publication ────────────────────────────────────────────────────────────
 
     def publish(self, topic: str, value, retain: bool = True) -> bool:
+        """
+        Publie `value` sur `{MQTT_PREFIX}/{topic}`.
+        Retourne True si le message a bien été envoyé, False si ignoré (RBE).
+        """
         full_topic = f"{MQTT_PREFIX}/{topic}"
         str_value  = str(value)
 
         if self._last.get(full_topic) == str_value:
-            return False
+            return False   # RBE : pas de changement
 
         result = self._client.publish(full_topic, payload=str_value, retain=retain)
+
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
             log.warning("Échec publication %s (rc=%s)", full_topic, result.rc)
             return False
@@ -99,22 +103,24 @@ class MQTTClient:
         log.debug("MQTT ↑ %s = %s", full_topic, str_value)
         return True
 
-    # ── Callbacks paho 2.x ───────────────────────────────────────────────────
+    # ── Callbacks compatibles paho 1.6.1 ET 2.x ──────────────────────────────
+    # paho 1.6.1 : on_connect(client, userdata, flags, rc)
+    # paho 2.x   : on_connect(client, userdata, flags, rc, properties)
+    # properties=None en optionnel couvre les deux versions.
 
-    def _on_connect(self, client, userdata, flags, reason_code, properties):
-        # reason_code est un objet ReasonCode ; supporte == avec int
-        if reason_code == 0:
+    def _on_connect(self, client, userdata, flags, rc, properties=None):
+        if rc == 0:
             self._connected = True
             log.info("MQTT connecté à %s:%s", MQTT_HOST, MQTT_PORT)
         else:
-            rc_int = reason_code.value
-            detail = _CONNACK_ERRORS.get(rc_int, "Erreur inconnue")
-            log.error("MQTT connexion refusée (rc=%d) : %s", rc_int, detail)
+            log.error("MQTT connexion refusée (rc=%s — %s)",
+                      rc, mqtt.connack_string(rc))
 
-    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties):
+    def _on_disconnect(self, client, userdata, rc, properties=None):
+        # paho 1.6.1 : (client, userdata, rc)
+        # paho 2.x   : (client, userdata, disconnect_flags, reason_code, properties)
         self._connected = False
-        if reason_code == 0:
+        if rc == 0:
             log.info("MQTT déconnecté proprement")
         else:
-            log.warning("MQTT déconnecté de façon inattendue (rc=%s) — reconnexion auto…",
-                        reason_code)
+            log.warning("MQTT déconnecté de façon inattendue (rc=%s) — reconnexion auto…", rc)
